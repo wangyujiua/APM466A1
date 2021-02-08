@@ -1,0 +1,153 @@
+---
+title: "APM466"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("jrvFinance")
+library("tidyverse")
+```
+
+## Load Data
+```{r cars}
+bondsClean = read.csv("/Users/H/Desktop/APM466DATA.csv", header = TRUE)
+bondsClean = as.data.frame(bondsClean)
+bondsClean %>% head() %>% knitr::kable()
+```
+
+```{r}
+bondsDirty = read.csv("/Users/H/Desktop/APM466DIRTY.csv", header=TRUE)
+bondsDirty = as.data.frame(bondsDirty)
+bondsDirty %>% head() %>% knitr::kable()   
+```
+
+```{r}
+Spots = Yields = matrix(1, nrow = 11, ncol = 10)
+Forwards = matrix(1, nrow = 4, ncol = 10)
+Dates = paste0("2021-01-", c(18:22, 25:29))
+```
+
+# YTM
+```{r}
+for (i in c(1:10))  {
+    for (j in c(1:10)) {
+        Yields[i, j] = bond.yield(
+            Dates[j],
+            bondsClean$Maturity.Date[i],
+            bondsClean$Coupon[i],
+            freq = 2,
+            bondsClean[i, j + 9],
+            "ACT/ACT",
+            comp.freq = 2,
+            redemption_value = 100
+        )
+    }
+} 
+Yields = Yields[1:10,]
+rownames(Yields) = bondsClean$Bond.name
+colnames(Yields) = Dates
+Yields %>% knitr::kable()
+```
+
+```{r}
+yields_table = NULL
+for (i in c(1:ncol(Yields))) {
+    yields_table = rbind(yields_table, data.frame(
+                             Years = (1:10) / 2,
+                             Yields = Yields[1:10, i],
+                             Day = colnames(Yields)[i])
+                         )
+}
+yields_table %>%
+    ggplot() +
+    geom_point(aes(x = Years, y = Yields, colour = Day)) + 
+    geom_smooth(aes(x = Years, y = Yields, colour = Day), method = "loess", se = FALSE, formula = "y ~ x")
+```
+
+
+# Spots
+```{r}
+#calculate spot rates for rest of time periods
+for (i in c(1:10)) {
+    for (j in c(1:10)) {
+        price = bondsDirty[i, 9 + j]
+        coupon = bondsDirty$Coupon[i] * 100 / 2 
+        face = 100
+        coupons_PV = 0
+        maturityMonths = bondsDirty$months.until.maturity[i] / 12
+        coupon_times = seq((bondsDirty$months.since.last.coupon[i] - 6) / 12, maturityMonths - 1 / 12, 1 / 2)
+        coupons_PV = sum(coupon * (1 + Spots[1:length(coupon_times), j] / 2) ^ (-2 * coupon_times))
+        newprice = price - coupons_PV
+        Spots[i, j] = 2 * ((newprice / (coupon + face)) ^ (-1 / (2 * maturityMonths)) - 1)
+    }
+}
+Spots = Spots[1:10,]
+rownames(Spots) = bondsClean$Bond.name
+colnames(Spots) = Dates
+Spots %>% knitr::kable()
+```
+
+```{r}
+spots_table = NULL
+for (i in c(1:ncol(Spots))) {
+    spots_table = rbind(spots_table, data.frame(
+                             Years = (1:10) / 2,
+                             Spot.Rate = Spots[1:10, i],
+                             Day = colnames(Spots)[i])
+                         )
+}
+spots_table %>%
+    ggplot() +
+    geom_point(aes(x = Years, y = Spot.Rate, colour = Day)) + 
+    geom_smooth(aes(x = Years, y = Spot.Rate, colour = Day), method = "loess", se = FALSE, formula = "y ~ x")
+```
+
+#Forwards
+```{r}
+for (j in c(1:4)) {
+    for (i in c(1:10)) {
+        n_yr = (1 + Spots[2 * j, i] / 2) ^ (2 * j)
+        one_yr_fwd = (1 + Spots[2 + 2 * j, i] / 2) ^ (2 + 2 * j)
+        Forwards[j, i] = 2 * ((one_yr_fwd / n_yr) ^ (1 / 2) - 1)
+    }
+}
+Forwards %>% knitr::kable()
+```
+
+```{r}
+forward_table = NULL
+for (i in c(1:ncol(Forwards))) {
+    forward_table = rbind(forward_table, data.frame(
+                             Years = (1:4),
+                             Spot.Rate = Forwards[1:4, i],
+                             Day = Dates[i])
+                         )
+}
+forward_table %>%
+    ggplot() +
+    geom_point(aes(x = Years, y = Spot.Rate, colour = Day)) + 
+    geom_line(aes(x = Years, y = Spot.Rate, colour = Day))
+```
+
+
+# Covariance matrices for log-return of yields
+```{r}
+log_return_yields = t(log(Yields[1:5, 1:9] / Yields[1:5, 2:10]))
+covariance_of_log_returns = cov(log_return_yields, log_return_yields)
+covariance_of_log_returns
+```
+
+# Covariance matrices for forward rates
+```{r}
+fwdrates = t(log(Forwards[, 1:9] / Forwards[, 2:10]))
+covariance_of_fwdrates = cov(fwdrates, fwdrates)
+covariance_of_fwdrates
+```
+
+# Eigenitems of the above covariance matrices
+```{r}
+eigenitems_yield = eigen(covariance_of_log_returns, symmetric = TRUE)
+eigenitems_fwd = eigen(covariance_of_fwdrates, symmetric = TRUE)
+list(yield = eigenitems_yield, forward = eigenitems_fwd)
+```
